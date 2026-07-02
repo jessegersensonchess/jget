@@ -1,0 +1,108 @@
+// Package datadog implements a Datadog backend for the metrics package.
+//
+// This package adapts the generic metrics.Backend interface to Datadog's
+// DogStatsD protocol using the official statsd client library. It translates
+// metric labels into Datadog tags and forwards counter and histogram
+// observations to a local or remote Datadog agent.
+//
+// The intent is to decouple Datadog-specific dependencies and configuration
+// from the rest of the project, which depends only on
+// the metrics.Backend abstraction and can swap to alternative backends
+// (Prometheus, StatsD, etc.) without other changes.
+package datadog
+
+import (
+	"etl/internal/metrics"
+	"fmt"
+
+	"github.com/DataDog/datadog-go/v5/statsd"
+)
+
+// Config holds Datadog backend configuration.
+type Config struct {
+	// Addr is the DogStatsD address, e.g. "127.0.0.1:8125" or "unix:///path/to/socket".
+	Addr string
+
+	// Namespace is an optional prefix added to all metric names, e.g. "etl.".
+	Namespace string
+
+	// GlobalTags are tags applied to all metrics emitted by this backend,
+	// e.g. []string{"env:prod","service:etl"}.
+	GlobalTags []string
+}
+
+// Backend is a Datadog implementation of metrics.Backend.
+//
+// It wraps a statsd.Client and maps metric names and labels to Datadog
+// metric names and tags. The same Backend instance is intended to be
+// installed as the global metrics backend via metrics.SetBackend.
+type Backend struct {
+	client *statsd.Client
+}
+
+// NewBackend constructs a Datadog metrics backend from the given configuration.
+//
+// The Addr field is required; when empty, NewBackend returns an error.
+func NewBackend(cfg Config) (*Backend, error) {
+	if cfg.Addr == "" {
+		return nil, fmt.Errorf("datadog: Addr is required")
+	}
+
+	c, err := statsd.New(cfg.Addr)
+	if err != nil {
+		return nil, fmt.Errorf("datadog: create client: %w", err)
+	}
+
+	if cfg.Namespace != "" {
+		c.Namespace = cfg.Namespace
+	}
+	if len(cfg.GlobalTags) > 0 {
+		c.Tags = cfg.GlobalTags
+	}
+
+	return &Backend{client: c}, nil
+}
+
+// IncCounter implements metrics.Backend.IncCounter using a Datadog Count metric.
+//
+// It converts labels to Datadog tags in the form "key:value".
+func (b *Backend) IncCounter(name string, delta float64, labels metrics.Labels) {
+	if b.client == nil {
+		return
+	}
+	tags := labelsToTags(labels)
+	// DogStatsD Count expects an int64; fractional deltas are rounded.
+	b.client.Count(name, int64(delta), tags, 1)
+}
+
+// ObserveHistogram implements metrics.Backend.ObserveHistogram using a Datadog Histogram metric.
+func (b *Backend) ObserveHistogram(name string, value float64, labels metrics.Labels) {
+	if b.client == nil {
+		return
+	}
+	tags := labelsToTags(labels)
+	b.client.Histogram(name, value, tags, 1)
+}
+
+// Flush implements metrics.Backend.Flush.
+//
+// For the Datadog statsd client, Close() is the closest equivalent and is
+// typically used at process shutdown to flush any buffered data.
+func (b *Backend) Flush() error {
+	if b.client == nil {
+		return nil
+	}
+	return b.client.Close()
+}
+
+// labelsToTags converts a map of labels into Datadog tag strings "key:value".
+func labelsToTags(lbls metrics.Labels) []string {
+	if len(lbls) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(lbls))
+	for k, v := range lbls {
+		out = append(out, fmt.Sprintf("%s:%s", k, v))
+	}
+	return out
+}
