@@ -84,8 +84,14 @@ type runConfig struct {
 	MaxConnsPerHost int
 }
 
+var version = "v0.0.1" // Default version
+
 // main is intentionally small: it wires real dependencies and exits with a code.
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 	code := run(context.Background(), os.Args[1:], deps{
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
