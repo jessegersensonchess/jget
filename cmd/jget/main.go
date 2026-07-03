@@ -84,7 +84,7 @@ type runConfig struct {
 	MaxConnsPerHost int
 }
 
-var version = "v0.0.1" // Default version
+var version = "v0.0.1"
 
 // main is intentionally small: it wires real dependencies and exits with a code.
 func main() {
